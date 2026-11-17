@@ -4,6 +4,7 @@ Handles nucleotide sequence sanitization, IUPAC ambiguity code resolution, 2-bit
 encoding (A:00, C:01, G:10, T:11), and halo-partitioned genomic chunk generation.
 """
 
+from geneweaver.sequence_processor.encoder import EncodedTwoBit, TwoBitEncoder
 from geneweaver.sequence_processor.normalizer import SequenceNormalizer
 
-__all__ = ["SequenceNormalizer"]
+__all__ = ["SequenceNormalizer", "TwoBitEncoder", "EncodedTwoBit"]
