@@ -56,6 +56,10 @@ class SequenceNormalizer:
             Tuple of (is_valid, error_message_if_invalid).
         """
         allowed = self.ALL_VALID_NUCLEOTIDES if allow_ambiguity else self.CANONICAL_BASES
+        # Fast path: set-based check avoids Python per-character loop overhead
+        if set(sequence) <= allowed:
+            return True, None
+
         for idx, char in enumerate(sequence):
             if char not in allowed:
                 char_repr = repr(char)
