@@ -22,3 +22,10 @@ build/
 
 # IDE settings
 .vscode/
+
+# Genomic large datasets
+data/raw/
+data/processed/
+
+# Keep small synthetic test data in samples/ for demos
+!data/samples/
