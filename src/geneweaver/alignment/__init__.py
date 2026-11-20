@@ -8,6 +8,7 @@ from geneweaver.alignment.base import (
     BaseSequenceAligner,
     SequenceAligner,
 )
+from geneweaver.alignment.cpu_aligner import CPUAligner
 from geneweaver.alignment.models import (
     AlignmentConfig,
     AlignmentResult,
@@ -26,4 +27,5 @@ __all__ = [
     "AlignmentResult",
     "SequenceAligner",
     "BaseSequenceAligner",
+    "CPUAligner",
 ]
