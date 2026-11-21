@@ -131,6 +131,55 @@ class MismatchInfo:
             return False
         return True
 
+    def to_genomic_positions(
+        self,
+        global_start: int,
+        strand: Strand,
+        target_length: int = 23,
+    ) -> Tuple[int, ...]:
+        """Translates 1-based guide mismatch positions to 1-based global genomic coordinates.
+
+        For Forward (+) strand hits:
+            Guide position p (1-based, 5' to 3') maps directly to forward genomic position:
+            genomic_pos = global_start + p.
+
+        For Reverse (-) strand hits:
+            The guide aligns to the reverse-complement strand (3' to 5' relative to forward).
+            Guide position p (1-based, 5' to 3') corresponds to forward offset (target_length - p):
+            genomic_pos = global_start + (target_length - p) + 1.
+
+        Args:
+            global_start: 0-based global genomic start position on the forward chromosome.
+            strand: Strand orientation (Strand.FORWARD or Strand.REVERSE).
+            target_length: Total length of the genomic target sequence window (default: 23 bp).
+
+        Returns:
+            Tuple of 1-based global genomic coordinates in ascending numerical order.
+        """
+        if strand == Strand.FORWARD:
+            return tuple(global_start + p for p in self.positions)
+        else:
+            return tuple(sorted(global_start + (target_length - p) + 1 for p in self.positions))
+
+    def to_forward_relative_positions(
+        self,
+        strand: Strand,
+        target_length: int = 23,
+    ) -> Tuple[int, ...]:
+        """Translates 1-based guide mismatch positions to 1-based positions relative to the forward genomic window.
+
+        Args:
+            strand: Strand orientation (Strand.FORWARD or Strand.REVERSE).
+            target_length: Total length of the genomic target window (default: 23 bp).
+
+        Returns:
+            Tuple of 1-based offsets (1..target_length) along the forward genomic reference.
+        """
+        if strand == Strand.FORWARD:
+            return self.positions
+        else:
+            return tuple(sorted((target_length - p) + 1 for p in self.positions))
+
 
 @dataclass(frozen=True)
 class AlignmentConfig:
@@ -258,6 +307,55 @@ class RawCandidateHit:
     def strand_symbol(self) -> str:
         """String symbol '+' or '-'."""
         return self.strand.sign
+
+    @property
+    def mismatch_positions(self) -> Tuple[int, ...]:
+        """Returns 1-based mismatch positions relative to the guide sequence (5' to 3', 1..20)."""
+        return self.mismatch_info.positions
+
+    @property
+    def guide_mismatch_positions(self) -> Tuple[int, ...]:
+        """Explicit alias for 1-based mismatch positions relative to the guide sequence (5' to 3')."""
+        return self.mismatch_info.positions
+
+    @property
+    def genomic_mismatch_positions(self) -> Tuple[int, ...]:
+        """Returns 1-based absolute genomic coordinates on the forward reference chromosome.
+
+        For Forward (+) strand:
+            Mismatches are at global_start + p.
+
+        For Reverse (-) strand:
+            Mismatches are at global_start + (target_length - p) + 1.
+        """
+        target_len = len(self.target_sequence) if self.target_sequence else 23
+        return self.mismatch_info.to_genomic_positions(
+            global_start=self.global_start,
+            strand=self.strand,
+            target_length=target_len,
+        )
+
+    @property
+    def forward_relative_mismatch_positions(self) -> Tuple[int, ...]:
+        """Returns 1-based mismatch positions relative to the forward genomic reference window."""
+        target_len = len(self.target_sequence) if self.target_sequence else 23
+        return self.mismatch_info.to_forward_relative_positions(
+            strand=self.strand,
+            target_length=target_len,
+        )
+
+    @property
+    def forward_sequence(self) -> str:
+        """Returns the nucleotide sequence as present on the forward (+) reference strand."""
+        if self.strand == Strand.FORWARD or not self.target_sequence:
+            return self.target_sequence
+        from geneweaver.alignment.reverse_complement import reverse_complement
+        return reverse_complement(self.target_sequence)
+
+    @property
+    def reference_sequence(self) -> str:
+        """Alias for forward_sequence conforming to genomic coordinate conventions."""
+        return self.forward_sequence
 
 
 @dataclass(frozen=True)

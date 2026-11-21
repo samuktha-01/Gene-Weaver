@@ -81,3 +81,15 @@ class SequenceNormalizer:
         """
         pattern = re.compile(rf"N{{{min_length},}}")
         return [(m.start(), m.end()) for m in pattern.finditer(sequence)]
+
+    def reverse_complement(self, sequence: str) -> str:
+        """Generates the reverse complement of a nucleotide sequence string.
+
+        Args:
+            sequence: Raw DNA/RNA sequence string.
+
+        Returns:
+            Normalized uppercase reverse-complemented DNA string.
+        """
+        from geneweaver.alignment.reverse_complement import reverse_complement
+        return reverse_complement(sequence)

@@ -20,6 +20,7 @@ from geneweaver.alignment.models import (
     RawCandidateHit,
     Strand,
 )
+from geneweaver.alignment.reverse_complement import reverse_complement
 from geneweaver.genomic_parser.exceptions import InvalidSequenceError
 from geneweaver.genomic_parser.validator import SequenceValidator
 from geneweaver.sequence_processor.chunker import ChunkDescriptor
@@ -124,6 +125,10 @@ class CPUAligner(BaseSequenceAligner):
     ) -> AlignmentResult:
         """Executes vectorized NumPy sliding-window alignment on a single genomic chunk.
 
+        Evaluates Forward (+) and optionally Reverse (-) strands according to
+        `effective_config.search_reverse_strand`. Preserves global genomic coordinates,
+        core deduplication invariants, and bounded batch processing.
+
         Args:
             chunk: Validated ChunkDescriptor with sequence payload.
             guide: Resolved GuideTarget instance.
@@ -159,18 +164,92 @@ class CPUAligner(BaseSequenceAligner):
                 config=effective_config,
             )
 
+        num_windows_per_strand = seq_len - guide_len + 1
+        powers = (1 << np.arange(guide_len, dtype=np.uint32))
+        hits: List[RawCandidateHit] = []
+
+        # 1. Forward Strand (+) Alignment
+        fwd_hits = self._scan_single_strand(
+            seq_2bit=seq_2bit,
+            seq_str=seq_str,
+            guide_encoded=guide_encoded,
+            guide_len=guide_len,
+            strand=Strand.FORWARD,
+            chunk=chunk,
+            effective_config=effective_config,
+            powers=powers,
+        )
+        hits.extend(fwd_hits)
+
+        # 2. Reverse Strand (-) Alignment
+        if effective_config.search_reverse_strand:
+            # Vectorized reverse complement: in 2-bit encoding, comp(x) = x ^ 3; reverse via [::-1]
+            rc_seq_2bit = np.ascontiguousarray((seq_2bit ^ 3)[::-1])
+            rc_seq_str = reverse_complement(seq_str) if seq_str is not None else None
+
+            rev_hits = self._scan_single_strand(
+                seq_2bit=rc_seq_2bit,
+                seq_str=rc_seq_str,
+                guide_encoded=guide_encoded,
+                guide_len=guide_len,
+                strand=Strand.REVERSE,
+                chunk=chunk,
+                effective_config=effective_config,
+                powers=powers,
+            )
+            hits.extend(rev_hits)
+
+        # Sort candidate hits deterministically by local_offset, then strand (FORWARD 0 before REVERSE 1)
+        if len(hits) > 1:
+            hits.sort(key=lambda h: (h.local_offset, h.strand))
+
+        elapsed_ms = (time.perf_counter() - start_time) * 1000.0
+
+        return AlignmentResult(
+            chunk_id=chunk.chunk_id,
+            chromosome=chunk.chromosome,
+            hits=hits,
+            total_windows_evaluated=num_windows_per_strand,
+            execution_time_ms=elapsed_ms,
+            backend=self.backend_name,
+            config=effective_config,
+        )
+
+    def _scan_single_strand(
+        self,
+        seq_2bit: np.ndarray,
+        seq_str: Optional[str],
+        guide_encoded: np.ndarray,
+        guide_len: int,
+        strand: Strand,
+        chunk: ChunkDescriptor,
+        effective_config: AlignmentConfig,
+        powers: np.ndarray,
+    ) -> List[RawCandidateHit]:
+        """Scans a single strand sequence (forward or reverse-complement) using vectorized sliding windows.
+
+        Args:
+            seq_2bit: 1D unpacked 2-bit array of the strand sequence.
+            seq_str: Optional ASCII string representation of the strand sequence.
+            guide_encoded: 1D unpacked 2-bit array of the guide spacer.
+            guide_len: Length of the guide spacer in nucleotides.
+            strand: Strand orientation (Strand.FORWARD or Strand.REVERSE).
+            chunk: ChunkDescriptor containing genomic coordinates and core boundaries.
+            effective_config: Alignment thresholds and batch size.
+            powers: Bitshift power array for dot-product bitmask construction.
+
+        Returns:
+            List of detected candidate hits strictly passing core filtering and mismatch cutoffs.
+        """
+        seq_len = seq_2bit.size
         num_windows = seq_len - guide_len + 1
         batch_size = effective_config.batch_size
         core_length = chunk.core_length
         hits: List[RawCandidateHit] = []
 
-        # Precompute bitshift powers for vectorized integer bitmask calculation
-        powers = (1 << np.arange(guide_len, dtype=np.uint32))
-
         # Process sliding windows in memory-bounded batches
         for batch_start in range(0, num_windows, batch_size):
             batch_end = min(batch_start + batch_size, num_windows)
-            batch_count = batch_end - batch_start
 
             # Slice sequence segment covering all windows in this batch
             chunk_slice = seq_2bit[batch_start : batch_end + guide_len - 1]
@@ -188,24 +267,37 @@ class CPUAligner(BaseSequenceAligner):
                 continue
 
             match_indices = np.flatnonzero(cand_mask)
-            local_offsets = batch_start + match_indices
+            scan_offsets = batch_start + match_indices
 
-            # Halo deduplication: only retain candidates starting in core region
-            core_mask = local_offsets < core_length
+            # Target sequence length (up to 23 bp, or remaining bases if near end)
+            target_lens = np.minimum(23, seq_len - scan_offsets)
+
+            # Coordinate translation: map scan offsets to 0-based local offsets on forward reference chunk
+            if strand == Strand.FORWARD:
+                fwd_offsets = scan_offsets
+            else:
+                # Reverse strand: index j in S_rev corresponds to forward local offset (N - j - target_len)
+                fwd_offsets = seq_len - scan_offsets - target_lens
+
+            # Halo deduplication: strictly retain candidates starting within the chunk core
+            core_mask = (fwd_offsets < core_length) & (fwd_offsets >= 0)
             if not np.any(core_mask):
                 continue
 
             filtered_match_indices = match_indices[core_mask]
-            filtered_offsets = local_offsets[core_mask]
-            filtered_counts = mismatch_counts[filtered_match_indices]
+            filtered_fwd_offsets = fwd_offsets[core_mask]
+            filtered_scan_offsets = scan_offsets[core_mask]
+            filtered_target_lens = target_lens[core_mask]
             filtered_diffs = diffs[filtered_match_indices]
 
             # Vectorized bitmask computation: diff matrix dot product with powers of 2
             bitmasks = filtered_diffs.astype(np.uint32) @ powers
 
             # Materialize RawCandidateHit instances for passing hits
-            for idx in range(len(filtered_offsets)):
-                offset = int(filtered_offsets[idx])
+            for idx in range(len(filtered_fwd_offsets)):
+                fwd_offset = int(filtered_fwd_offsets[idx])
+                scan_offset = int(filtered_scan_offsets[idx])
+                target_len = int(filtered_target_lens[idx])
                 bitmask = int(bitmasks[idx])
 
                 mismatch_info = MismatchInfo.from_bitmask(
@@ -214,48 +306,33 @@ class CPUAligner(BaseSequenceAligner):
                     seed_length=effective_config.seed_length,
                 )
 
-                global_start = chunk.global_start + offset
-                genomic_pos = chunk.to_1based_coordinate(offset)
+                global_start = chunk.global_start + fwd_offset
+                global_end = global_start + target_len
+                genomic_pos = chunk.to_1based_coordinate(fwd_offset)
 
-                # Extract target sequence and PAM sequence
+                # Extract target sequence (5' to 3' of the matching strand) and PAM sequence
                 if seq_str is not None:
-                    target_seq = seq_str[offset : min(offset + 23, chunk.actual_length)]
-                    if offset + 23 <= chunk.actual_length:
-                        pam_seq = seq_str[offset + 20 : offset + 23]
-                    else:
-                        pam_seq = seq_str[offset + guide_len : chunk.actual_length]
+                    target_seq = seq_str[scan_offset : scan_offset + target_len]
                 else:
-                    target_len = min(23, chunk.actual_length - offset)
-                    target_seq = TwoBitEncoder.decode(seq_2bit[offset : offset + target_len])
-                    pam_seq = target_seq[guide_len:] if target_len > guide_len else ""
+                    target_seq = TwoBitEncoder.decode(seq_2bit[scan_offset : scan_offset + target_len])
 
-                global_end = global_start + len(target_seq)
+                pam_seq = target_seq[guide_len:] if target_len > guide_len else ""
 
                 hit = RawCandidateHit(
                     chunk_id=chunk.chunk_id,
                     chromosome=chunk.chromosome,
-                    local_offset=offset,
+                    local_offset=fwd_offset,
                     global_start=global_start,
                     global_end=global_end,
                     genomic_position=genomic_pos,
-                    strand=Strand.FORWARD,
+                    strand=strand,
                     mismatch_info=mismatch_info,
                     pam_sequence=pam_seq,
                     target_sequence=target_seq,
                 )
                 hits.append(hit)
 
-        elapsed_ms = (time.perf_counter() - start_time) * 1000.0
-
-        return AlignmentResult(
-            chunk_id=chunk.chunk_id,
-            chromosome=chunk.chromosome,
-            hits=hits,
-            total_windows_evaluated=num_windows,
-            execution_time_ms=elapsed_ms,
-            backend=self.backend_name,
-            config=effective_config,
-        )
+        return hits
 
     def align_chunks(
         self,

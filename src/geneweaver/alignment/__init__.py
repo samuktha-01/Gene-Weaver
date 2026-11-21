@@ -17,6 +17,10 @@ from geneweaver.alignment.models import (
     RawCandidateHit,
     Strand,
 )
+from geneweaver.alignment.reverse_complement import (
+    ReverseComplement,
+    reverse_complement,
+)
 
 __all__ = [
     "Strand",
@@ -28,4 +32,6 @@ __all__ = [
     "SequenceAligner",
     "BaseSequenceAligner",
     "CPUAligner",
+    "ReverseComplement",
+    "reverse_complement",
 ]
