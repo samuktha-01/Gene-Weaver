@@ -352,6 +352,73 @@ class CPUAligner(BaseSequenceAligner):
         """
         return [self.align(chunk=c, guide=guide, config=config) for c in chunks]
 
+    def align_and_validate(
+        self,
+        chunk: ChunkDescriptor,
+        guide: Union[GuideTarget, str, np.ndarray],
+        config: Optional[AlignmentConfig] = None,
+        validator: Optional[object] = None,
+        filter_incompatible: bool = False,
+    ) -> List[object]:
+        """Aligns a CRISPR guide against a genomic chunk and validates PAM motifs on candidates.
+
+        Args:
+            chunk: Genomic chunk descriptor.
+            guide: Target guide sequence.
+            config: Optional alignment configuration overrides.
+            validator: Optional PAMValidator instance (defaults to standard SpCas9 validator).
+            filter_incompatible: If True, filters out candidate hits lacking a valid PAM motif.
+
+        Returns:
+            List of ValidatedCandidateHit instances containing validation status and coordinates.
+        """
+        from geneweaver.scoring.pam_evaluator import PAMValidator
+        pam_validator = validator if isinstance(validator, PAMValidator) else PAMValidator()
+        result = self.align(chunk=chunk, guide=guide, config=config)
+        canonical_only = (
+            config.canonical_pam_only if config is not None else self.config.canonical_pam_only
+        )
+        return pam_validator.validate_alignment_result(
+            result=result,
+            canonical_only=canonical_only,
+            filter_incompatible=filter_incompatible,
+        )
+
+    def align_chunks_and_validate(
+        self,
+        chunks: Iterable[ChunkDescriptor],
+        guide: Union[GuideTarget, str, np.ndarray],
+        config: Optional[AlignmentConfig] = None,
+        validator: Optional[object] = None,
+        filter_incompatible: bool = False,
+    ) -> List[object]:
+        """Aligns a CRISPR guide across multiple genomic chunks and validates PAM motifs.
+
+        Args:
+            chunks: Iterable of ChunkDescriptor partitions.
+            guide: Target guide sequence.
+            config: Optional alignment configuration overrides.
+            validator: Optional PAMValidator instance.
+            filter_incompatible: If True, returns only candidates with valid PAM motifs.
+
+        Returns:
+            List of ValidatedCandidateHit instances across all chunks.
+        """
+        from geneweaver.scoring.pam_evaluator import PAMValidator
+        pam_validator = validator if isinstance(validator, PAMValidator) else PAMValidator()
+        validated_hits = []
+        for chunk in chunks:
+            validated_hits.extend(
+                self.align_and_validate(
+                    chunk=chunk,
+                    guide=guide,
+                    config=config,
+                    validator=pam_validator,
+                    filter_incompatible=filter_incompatible,
+                )
+            )
+        return validated_hits
+
     @staticmethod
     def _resolve_chunk_sequence(
         seq_data: Union[str, np.ndarray, EncodedTwoBit],
