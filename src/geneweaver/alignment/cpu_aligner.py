@@ -419,6 +419,46 @@ class CPUAligner(BaseSequenceAligner):
             )
         return validated_hits
 
+    def align_validate_and_rank(
+        self,
+        chunk: ChunkDescriptor,
+        guide: Union[GuideTarget, str, np.ndarray],
+        config: Optional[AlignmentConfig] = None,
+        validator: Optional[object] = None,
+        filter_incompatible: bool = False,
+        scorer: Optional[object] = None,
+        ranking_config: Optional[object] = None,
+    ) -> object:
+        """Executes full alignment, PAM validation, mismatch scoring, and deterministic ranking.
+
+        Args:
+            chunk: Genomic chunk descriptor.
+            guide: Target CRISPR guide sequence.
+            config: Optional alignment configuration overrides.
+            validator: Optional PAMValidator instance.
+            filter_incompatible: If True, filters out PAM-incompatible hits before ranking.
+            scorer: Optional BaseMismatchScorer (defaults to HsuZhangScorer).
+            ranking_config: Optional RankingConfig thresholds.
+
+        Returns:
+            CandidateRankingResult containing ranked off-target candidates.
+        """
+        from geneweaver.scoring.candidate_ranker import CandidateRanker
+        validated_hits = self.align_and_validate(
+            chunk=chunk,
+            guide=guide,
+            config=config,
+            validator=validator,
+            filter_incompatible=filter_incompatible,
+        )
+        ranker = CandidateRanker()
+        return ranker.rank_validated_hits(
+            validated_hits=validated_hits,
+            guide=guide,
+            scorer=scorer,
+            ranking_config=ranking_config,
+        )
+
     @staticmethod
     def _resolve_chunk_sequence(
         seq_data: Union[str, np.ndarray, EncodedTwoBit],

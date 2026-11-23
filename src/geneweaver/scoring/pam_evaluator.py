@@ -221,10 +221,10 @@ class PAMValidationResult:
 
     is_valid: bool
     is_canonical: bool
-    matched_motif: Optional[str]
-    cleavage_multiplier: float
-    pam_sequence: str
-    details: str
+    matched_motif: Optional[str] = None
+    cleavage_multiplier: float = 1.0
+    pam_sequence: str = ""
+    details: str = ""
 
     def __bool__(self) -> bool:
         return self.is_valid
