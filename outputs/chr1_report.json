@@ -1,0 +1,52 @@
+{
+  "metadata": {
+    "pipeline": "GeneWeaver CPU Alignment Pipeline",
+    "version": "0.1.0",
+    "fasta_path": "C:\\Users\\keert\\OneDrive\\Desktop\\Gene-weaver-project-2\\Gene-Weaver\\data\\raw\\GRCh38\\chr1_region.fasta.fa",
+    "guide_sequence": "GCTTATCCAGTCTGCTACGC",
+    "spacer_sequence": "GCTTATCCAGTCTGCTACGC",
+    "nuclease": "SpCas9",
+    "scoring_model": "hsu_zhang",
+    "search_reverse_strand": true
+  },
+  "statistics": {
+    "total_records": 1,
+    "total_chunks": 3,
+    "total_base_pairs": 24895643,
+    "total_windows_evaluated": 24895630,
+    "raw_candidates_detected": 1,
+    "pam_compatible_candidates": 1,
+    "pam_incompatible_candidates": 0,
+    "total_scored_candidates": 1,
+    "retained_candidates": 1,
+    "elapsed_seconds": 15.5252,
+    "peak_memory_mb": 111.97,
+    "throughput_bp_per_sec": 1603563.11
+  },
+  "results": [
+    {
+      "rank": 1,
+      "score": 100.0,
+      "raw_score": 100.0,
+      "chromosome": "ref|NC_000001.11|:85401937-110297579",
+      "accession": "NC_000001.11",
+      "strand": "+",
+      "genomic_start": 85502040,
+      "genomic_end": 85502059,
+      "protospacer_start": 100103,
+      "protospacer_end": 100123,
+      "pam_start": 100123,
+      "pam_end": 100126,
+      "pam_sequence": "TGG",
+      "is_valid_pam": true,
+      "is_canonical_pam": true,
+      "matched_motif": "NGG",
+      "mismatch_count": 0,
+      "seed_mismatches": 0,
+      "non_seed_mismatches": 0,
+      "mismatch_positions": "",
+      "target_sequence": "GCTTATCCAGTCTGCTACGCTGG",
+      "scoring_model": "hsu_zhang"
+    }
+  ]
+}

@@ -1,0 +1,27 @@
+{
+  "metadata": {
+    "pipeline": "GeneWeaver CPU Alignment Pipeline",
+    "version": "0.1.0",
+    "fasta_path": "C:\\Users\\keert\\OneDrive\\Desktop\\Gene-weaver-project-2\\Gene-Weaver\\data\\raw\\GRCh38\\chr1_region.fasta.fa",
+    "guide_sequence": "GAGTCCGAGCAGAAGAAGAA",
+    "spacer_sequence": "GAGTCCGAGCAGAAGAAGAA",
+    "nuclease": "SpCas9",
+    "scoring_model": "hsu_zhang",
+    "search_reverse_strand": true
+  },
+  "statistics": {
+    "total_records": 1,
+    "total_chunks": 3,
+    "total_base_pairs": 24895643,
+    "total_windows_evaluated": 24895630,
+    "raw_candidates_detected": 0,
+    "pam_compatible_candidates": 0,
+    "pam_incompatible_candidates": 0,
+    "total_scored_candidates": 0,
+    "retained_candidates": 0,
+    "elapsed_seconds": 11.4834,
+    "peak_memory_mb": 111.97,
+    "throughput_bp_per_sec": 2167969.47
+  },
+  "results": []
+}

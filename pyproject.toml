@@ -52,6 +52,7 @@ dev = [
 
 [project.scripts]
 geneweaver = "geneweaver.dashboard.app:main"
+geneweaver-cpu = "geneweaver.pipeline.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

@@ -385,6 +385,11 @@ class AlignmentResult:
         """Returns the number of off-target candidate hits detected."""
         return len(self.hits)
 
+    @property
+    def candidates(self) -> List[RawCandidateHit]:
+        """Alias for hits conforming to candidate terminology."""
+        return self.hits
+
     def __len__(self) -> int:
         return len(self.hits)
 
