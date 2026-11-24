@@ -1,2 +1,0 @@
-rank,score,raw_score,chromosome,accession,strand,genomic_start,genomic_end,protospacer_start,protospacer_end,pam_start,pam_end,pam_sequence,is_valid_pam,is_canonical_pam,matched_motif,mismatch_count,seed_mismatches,non_seed_mismatches,mismatch_positions,target_sequence,scoring_model
-1,100.0,100.0,ref|NC_000001.11|:85401937-110297579,NC_000001.11,+,85502040,85502059,100103,100123,100123,100126,TGG,True,True,NGG,0,0,0,,GCTTATCCAGTCTGCTACGCTGG,hsu_zhang

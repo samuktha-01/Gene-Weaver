@@ -29,3 +29,6 @@ data/processed/
 
 # Keep small synthetic test data in samples/ for demos
 !data/samples/
+
+# Generated pipeline results
+outputs/
