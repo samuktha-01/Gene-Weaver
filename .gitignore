@@ -1,5 +1,7 @@
 # Virtual environment
 .venv/
+venv/
+env/
 
 # Python cache
 __pycache__/
@@ -8,20 +10,34 @@ __pycache__/
 # Testing
 .pytest_cache/
 .coverage
+.coverage.*
 htmlcov/
+coverage.xml
+*.cover
 
 # Build files
 dist/
 build/
 *.egg-info/
 
-# Environment variables
+# Python type checking and linting
+.mypy_cache/
+.pyright/
+.ruff_cache/
+
+# Jupyter Notebook
+.ipynb_checkpoints/
+
+# Environment variables and secrets
 .env
 .env.*
 !.env.example
+*.local
+secrets/
 
 # IDE settings
 .vscode/
+.idea/
 
 # Genomic large datasets
 data/raw/
@@ -30,5 +46,12 @@ data/processed/
 # Keep small synthetic test data in samples/ for demos
 !data/samples/
 
-# Generated pipeline results
+# Generated pipeline results and reports
 outputs/
+/*.csv
+/*.json
+
+# Logs and temporary files
+*.log
+*.tmp
+*.bak
