@@ -116,6 +116,27 @@ Examples:
         help="Mismatch scoring model (default: 'hsu_zhang', Hsu et al. Nature Biotech 2013).",
     )
 
+    # On-target classification parameters
+    parser.add_argument(
+        "--target-chr",
+        type=str,
+        default=None,
+        help="Target locus chromosome (e.g. 'chr1' or 'NC_000001.11') for explicit on-target site identification.",
+    )
+    parser.add_argument(
+        "--target-start",
+        type=int,
+        default=None,
+        help="Target locus start coordinate (1-based genomic reference or region-relative start) for on-target classification.",
+    )
+    parser.add_argument(
+        "--target-strand",
+        type=str,
+        default=None,
+        choices=["+", "-", "forward", "reverse"],
+        help="Target locus strand orientation (+ or -).",
+    )
+
     # Chunking & Performance parameters
     parser.add_argument(
         "--chunk-size",
@@ -195,6 +216,9 @@ def main(args: Optional[List[str]] = None) -> int:
         batch_size=parsed.batch_size,
         top_k=parsed.top_k,
         scoring_model=parsed.scoring_model,
+        target_chromosome=parsed.target_chr,
+        target_start=parsed.target_start,
+        target_strand=parsed.target_strand,
         output_csv=parsed.output_csv,
         output_json=parsed.output_json,
     )
@@ -225,7 +249,13 @@ def main(args: Optional[List[str]] = None) -> int:
     print(f" Sliding Windows Evaluated:  {stats.total_windows_evaluated:,}")
     print(f" Raw Candidates Detected:    {stats.raw_candidates_detected:,}")
     print(f" PAM-Compatible Candidates:  {stats.pam_compatible_candidates:,}")
-    print(f" Retained Off-Target Sites:  {stats.retained_candidates:,}")
+    print(f" On-Target Sites Retained:   {stats.on_target_candidates:,}")
+    print(f" Retained Off-Target Sites:  {stats.off_target_candidates:,}")
+    if stats.mismatch_distribution:
+        mm_str = ", ".join(
+            f"{k}MM: {v:,}" for k, v in sorted(stats.mismatch_distribution.items())
+        )
+        print(f" Raw Mismatch Breakdown:     {mm_str}")
     print(f" Wall-Clock Execution Time:  {stats.elapsed_seconds:.2f} seconds")
     if stats.elapsed_seconds > 0:
         throughput = stats.total_base_pairs / stats.elapsed_seconds
@@ -236,15 +266,16 @@ def main(args: Optional[List[str]] = None) -> int:
 
     # Display Top 10 Ranked Hits in Table Format
     display_k = min(10, len(result.hits))
-    print(f"Top {display_k} Off-Target Candidates (Sorted by Predicted Risk):")
+    print(f"Top {display_k} Ranked Candidate Sites:")
     print()
 
     headers = [
         "Rank",
+        "Type",
         "Score",
         "Chr",
         "Strand",
-        "Start",
+        "Rel Start",
         "PAM",
         "Valid",
         "MM",
@@ -259,6 +290,7 @@ def main(args: Optional[List[str]] = None) -> int:
         table_rows.append(
             [
                 str(rank_idx),
+                hit.site_type,
                 f"{hit.score:6.2f}",
                 hit.chromosome[:16],
                 hit.strand.sign,

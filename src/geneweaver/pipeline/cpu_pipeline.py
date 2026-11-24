@@ -82,6 +82,9 @@ class PipelineConfig:
     top_k: Optional[int] = None
     scoring_model: str = "hsu_zhang"
     filter_incompatible_pam: bool = False
+    target_chromosome: Optional[str] = None
+    target_start: Optional[int] = None
+    target_strand: Optional[Union[str, Strand]] = None
     output_csv: Optional[Union[Path, str]] = None
     output_json: Optional[Union[Path, str]] = None
 
@@ -121,6 +124,9 @@ class PipelineStatistics:
     pam_incompatible_candidates: int = 0
     total_scored_candidates: int = 0
     retained_candidates: int = 0
+    on_target_candidates: int = 0
+    off_target_candidates: int = 0
+    mismatch_distribution: Dict[int, int] = field(default_factory=dict)
     elapsed_seconds: float = 0.0
     peak_memory_mb: float = 0.0
 
@@ -136,6 +142,9 @@ class PipelineStatistics:
             "pam_incompatible_candidates": self.pam_incompatible_candidates,
             "total_scored_candidates": self.total_scored_candidates,
             "retained_candidates": self.retained_candidates,
+            "on_target_candidates": self.on_target_candidates,
+            "off_target_candidates": self.off_target_candidates,
+            "mismatch_distribution": {str(k): v for k, v in sorted(self.mismatch_distribution.items())},
             "elapsed_seconds": round(self.elapsed_seconds, 4),
             "peak_memory_mb": round(self.peak_memory_mb, 2),
             "throughput_bp_per_sec": (
@@ -294,6 +303,11 @@ class CPUPipeline:
                 raw_hits = align_result.hits
                 stats.raw_candidates_detected += len(raw_hits)
 
+                for r in raw_hits:
+                    stats.mismatch_distribution[r.mismatch_count] = (
+                        stats.mismatch_distribution.get(r.mismatch_count, 0) + 1
+                    )
+
                 if not raw_hits:
                     continue
 
@@ -323,22 +337,31 @@ class CPUPipeline:
 
                 all_scored_hits.extend(chunk_scored)
 
+        # 3. Classify on-target vs off-target candidates
+        classified_hits = self._classify_candidates(
+            all_scored_hits,
+            config=config,
+            fasta_records=fasta_records_map,
+        )
+
         _report(
-            f"Ranking {len(all_scored_hits):,} accumulated candidate hits...",
+            f"Ranking {len(classified_hits):,} accumulated candidate hits...",
             85.0,
         )
 
-        # 3. Deterministic candidate ranking
-        ranking_result = ranker.rank(all_scored_hits, config=ranking_cfg)
+        # 4. Deterministic candidate ranking
+        ranking_result = ranker.rank(classified_hits, config=ranking_cfg)
         stats.retained_candidates = ranking_result.retained_count
+        stats.on_target_candidates = sum(1 for h in ranking_result.hits if h.is_on_target)
+        stats.off_target_candidates = sum(1 for h in ranking_result.hits if not h.is_on_target)
 
-        # 4. Measure elapsed time and peak memory
+        # 5. Measure elapsed time and peak memory
         stats.elapsed_seconds = time.perf_counter() - start_time
         current_mem, peak_mem = tracemalloc.get_traced_memory()
         tracemalloc.stop()
         stats.peak_memory_mb = peak_mem / (1024 * 1024)
 
-        # 5. Export results
+        # 6. Export results
         csv_path = None
         if config.output_csv:
             _report(f"Exporting results to CSV: {config.output_csv}", 90.0)
@@ -360,6 +383,9 @@ class CPUPipeline:
                 "nuclease": nuclease_cfg.name,
                 "scoring_model": config.scoring_model,
                 "search_reverse_strand": config.search_reverse_strand,
+                "target_chromosome": config.target_chromosome,
+                "target_start": config.target_start,
+                "target_strand": str(config.target_strand) if config.target_strand else None,
             }
             json_path = ResultExporter.export_json(
                 results=ranking_result,
@@ -426,3 +452,146 @@ class CPUPipeline:
             raise ValueError(
                 f"Unsupported scoring model '{model_name}'. Supported: 'hsu_zhang', 'experimental_positional'"
             )
+
+    @staticmethod
+    def _classify_candidates(
+        hits: Sequence[ScoredCandidateHit],
+        config: PipelineConfig,
+        fasta_records: Dict[str, FastaRecord],
+    ) -> List[ScoredCandidateHit]:
+        """Classifies candidate sites as ON_TARGET or OFF_TARGET.
+
+        Classification logic:
+        1. If user provides explicit target locus coordinates (target_start, and optionally
+           target_chromosome and target_strand):
+           - Matches on chromosome (case-insensitive substring or accession),
+             start coordinate (genomic 1-based or region-relative), and strand (if given)
+             are labeled 'ON_TARGET' with basis 'user_specified_coordinates'.
+           - All other candidates are labeled 'OFF_TARGET' with basis 'non_target_locus'.
+
+        2. If target locus coordinates are NOT provided:
+           - Candidates with 0 mismatches, valid PAM, and score == 100.0:
+             - Exactly 1 unique match: labeled 'ON_TARGET' with basis 'inferred_unique_exact_match'.
+             - Multiple matches: labeled 'ON_TARGET' with basis 'inferred_multiple_exact_matches'
+               (with a logged warning).
+           - All candidates with mismatches > 0 or non-canonical/imperfect PAM are labeled
+             'OFF_TARGET' with basis 'off_target_mismatches'.
+        """
+        if not hits:
+            return []
+
+        user_specified = config.target_start is not None
+        classified: List[ScoredCandidateHit] = []
+
+        if user_specified:
+            target_chr = (config.target_chromosome or "").strip().lower()
+            target_start = config.target_start
+            target_strand: Optional[Strand] = None
+            if config.target_strand is not None:
+                if isinstance(config.target_strand, Strand):
+                    target_strand = config.target_strand
+                else:
+                    target_strand = Strand.from_symbol(str(config.target_strand))
+
+            for hit in hits:
+                record = fasta_records.get(hit.chromosome)
+                coords = ResultExporter.calculate_genomic_coordinates(hit, record)
+                gen_start = coords["genomic_start"]
+                proto_start = hit.protospacer_start
+
+                chr_match = True
+                if target_chr:
+                    hit_chr = hit.chromosome.lower()
+                    chr_match = (
+                        target_chr == hit_chr
+                        or target_chr in hit_chr
+                        or hit_chr in target_chr
+                    )
+
+                coord_match = (
+                    target_start == gen_start
+                    or target_start == proto_start
+                    or target_start == proto_start + 1
+                )
+
+                strand_match = True
+                if target_strand is not None:
+                    strand_match = (hit.strand == target_strand)
+
+                if chr_match and coord_match and strand_match:
+                    classified.append(
+                        hit.with_classification(
+                            site_type="ON_TARGET",
+                            is_on_target=True,
+                            classification_basis="user_specified_coordinates",
+                        )
+                    )
+                else:
+                    classified.append(
+                        hit.with_classification(
+                            site_type="OFF_TARGET",
+                            is_on_target=False,
+                            classification_basis="non_target_locus",
+                        )
+                    )
+        else:
+            # Inferred classification
+            exact_hits = [
+                h for h in hits
+                if h.mismatch_count == 0 and h.is_valid_pam and h.score >= 99.99
+            ]
+
+            if len(exact_hits) == 1:
+                exact_hit_id = id(exact_hits[0])
+                for hit in hits:
+                    if id(hit) == exact_hit_id:
+                        classified.append(
+                            hit.with_classification(
+                                site_type="ON_TARGET",
+                                is_on_target=True,
+                                classification_basis="inferred_unique_exact_match",
+                            )
+                        )
+                    else:
+                        classified.append(
+                            hit.with_classification(
+                                site_type="OFF_TARGET",
+                                is_on_target=False,
+                                classification_basis="off_target_mismatches",
+                            )
+                        )
+            elif len(exact_hits) > 1:
+                logger.warning(
+                    f"Found {len(exact_hits)} exact 0-mismatch candidate matches without user-specified target coordinates. "
+                    "All exact matches are tagged as ON_TARGET ('inferred_multiple_exact_matches'). "
+                    "Supply --target-chr and --target-start to resolve the intended on-target locus unambiguously."
+                )
+                exact_hit_ids = {id(h) for h in exact_hits}
+                for hit in hits:
+                    if id(hit) in exact_hit_ids:
+                        classified.append(
+                            hit.with_classification(
+                                site_type="ON_TARGET",
+                                is_on_target=True,
+                                classification_basis="inferred_multiple_exact_matches",
+                            )
+                        )
+                    else:
+                        classified.append(
+                            hit.with_classification(
+                                site_type="OFF_TARGET",
+                                is_on_target=False,
+                                classification_basis="off_target_mismatches",
+                            )
+                        )
+            else:
+                for hit in hits:
+                    classified.append(
+                        hit.with_classification(
+                            site_type="OFF_TARGET",
+                            is_on_target=False,
+                            classification_basis="off_target_mismatches",
+                        )
+                    )
+
+        return classified

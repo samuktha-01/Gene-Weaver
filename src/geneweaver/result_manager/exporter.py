@@ -3,6 +3,20 @@
 Provides tabular CSV and structured JSON serializers for candidate off-target search results,
 preserving exact genomic coordinates, chromosome/accession identifiers, strand orientations,
 PAM motifs, mismatch positions, and calculated scores.
+
+Coordinate System Conventions:
+1. Reference Genome Coordinates (1-based inclusive):
+   - genomic_start: 1-based start coordinate of the 20 nt protospacer on the reference chromosome.
+   - genomic_end: 1-based end coordinate of the 20 nt protospacer on the reference chromosome.
+   - genomic_pam_start: 1-based start coordinate of the 3 nt PAM on the reference chromosome.
+   - genomic_pam_end: 1-based end coordinate of the 3 nt PAM on the reference chromosome.
+   When FASTA headers contain regional offsets (e.g. '>ref|NC_000001.11|:85401937-110297579'),
+   these fields are translated into absolute coordinates on the reference assembly.
+
+2. Region-Relative Coordinates (0-based half-open):
+   - region_protospacer_start, region_protospacer_end: 0-based slice indices within the FASTA record.
+   - region_pam_start, region_pam_end: 0-based slice indices of the PAM within the FASTA record.
+   - protospacer_start, protospacer_end, pam_start, pam_end: Aliases provided for backward compatibility.
 """
 
 import csv
@@ -21,6 +35,9 @@ class ResultExporter:
 
     CSV_FIELDNAMES = [
         "rank",
+        "site_type",
+        "is_on_target",
+        "classification_basis",
         "score",
         "raw_score",
         "chromosome",
@@ -28,6 +45,12 @@ class ResultExporter:
         "strand",
         "genomic_start",
         "genomic_end",
+        "genomic_pam_start",
+        "genomic_pam_end",
+        "region_protospacer_start",
+        "region_protospacer_end",
+        "region_pam_start",
+        "region_pam_end",
         "protospacer_start",
         "protospacer_end",
         "pam_start",
@@ -130,6 +153,58 @@ class ResultExporter:
             "results": rows,
         }
 
+    @staticmethod
+    def calculate_genomic_coordinates(
+        hit: Any,
+        record: Optional[FastaRecord] = None,
+    ) -> Dict[str, int]:
+        """Calculates 1-based reference-genome coordinates and 0-based region coordinates.
+
+        Coordinate conventions:
+        - Reference Genome: 1-based inclusive coordinates [genomic_start, genomic_end].
+          If the FASTA record was derived from a sub-region slice (e.g. :85401937-110297579),
+          the slice's starting coordinate (85401937) is used as base offset (85401936) so that:
+            genomic_start = base_offset + protospacer_start + 1
+            genomic_end = base_offset + protospacer_end
+            genomic_pam_start = base_offset + pam_start + 1
+            genomic_pam_end = base_offset + pam_end
+          Strand invariants:
+            Forward strand (+): genomic_pam_start == genomic_end + 1
+            Reverse strand (-): genomic_pam_end + 1 == genomic_start
+        - Region-Relative: 0-based half-open coordinates [protospacer_start, protospacer_end).
+        """
+        if record and record.coordinates:
+            base_offset = record.coordinates[0] - 1
+        else:
+            base_offset = 0
+
+        proto_start = getattr(hit, "protospacer_start", getattr(hit, "global_start", 0))
+        proto_end = getattr(hit, "protospacer_end", getattr(hit, "global_end", 0))
+        pam_start = getattr(hit, "pam_start", None)
+        pam_end = getattr(hit, "pam_end", None)
+
+        genomic_start = base_offset + proto_start + 1
+        genomic_end = base_offset + proto_end
+
+        if pam_start is not None and pam_end is not None:
+            genomic_pam_start = base_offset + pam_start + 1
+            genomic_pam_end = base_offset + pam_end
+        else:
+            genomic_pam_start = -1
+            genomic_pam_end = -1
+
+        return {
+            "base_offset": base_offset,
+            "genomic_start": genomic_start,
+            "genomic_end": genomic_end,
+            "genomic_pam_start": genomic_pam_start,
+            "genomic_pam_end": genomic_pam_end,
+            "region_protospacer_start": proto_start,
+            "region_protospacer_end": proto_end,
+            "region_pam_start": pam_start if pam_start is not None else -1,
+            "region_pam_end": pam_end if pam_end is not None else -1,
+        }
+
     @classmethod
     def _generate_rows(
         cls,
@@ -146,35 +221,36 @@ class ResultExporter:
             # Resolve accession
             if record_info:
                 accession = record_info.accession
-                header_coords = record_info.coordinates
             else:
                 accession = getattr(hit.candidate, "accession", chrom_id)
-                header_coords = None
 
-            # Calculate 1-based genomic coordinates (incorporating chromosome sub-region offset if present)
-            if header_coords:
-                base_offset = header_coords[0] - 1  # 0-based start of sub-region
-                genomic_start = base_offset + hit.protospacer_start + 1
-                genomic_end = base_offset + hit.protospacer_end
-            else:
-                genomic_start = hit.protospacer_start + 1
-                genomic_end = hit.protospacer_end
+            # Calculate coordinates using helper
+            coords = cls.calculate_genomic_coordinates(hit, record_info)
 
             mismatch_positions_str = ";".join(str(p) for p in hit.mismatch_positions)
 
             row = {
                 "rank": rank_idx,
+                "site_type": getattr(hit, "site_type", "OFF_TARGET"),
+                "is_on_target": getattr(hit, "is_on_target", False),
+                "classification_basis": getattr(hit, "classification_basis", "unassigned"),
                 "score": round(hit.score, 4),
                 "raw_score": round(hit.raw_score, 4),
                 "chromosome": chrom_id,
                 "accession": accession,
                 "strand": hit.strand.sign,
-                "genomic_start": genomic_start,
-                "genomic_end": genomic_end,
-                "protospacer_start": hit.protospacer_start,
-                "protospacer_end": hit.protospacer_end,
-                "pam_start": hit.pam_start if hit.pam_start is not None else -1,
-                "pam_end": hit.pam_end if hit.pam_end is not None else -1,
+                "genomic_start": coords["genomic_start"],
+                "genomic_end": coords["genomic_end"],
+                "genomic_pam_start": coords["genomic_pam_start"],
+                "genomic_pam_end": coords["genomic_pam_end"],
+                "region_protospacer_start": coords["region_protospacer_start"],
+                "region_protospacer_end": coords["region_protospacer_end"],
+                "region_pam_start": coords["region_pam_start"],
+                "region_pam_end": coords["region_pam_end"],
+                "protospacer_start": coords["region_protospacer_start"],
+                "protospacer_end": coords["region_protospacer_end"],
+                "pam_start": coords["region_pam_start"],
+                "pam_end": coords["region_pam_end"],
                 "pam_sequence": hit.pam_sequence,
                 "is_valid_pam": hit.is_valid_pam,
                 "is_canonical_pam": hit.is_canonical_pam,

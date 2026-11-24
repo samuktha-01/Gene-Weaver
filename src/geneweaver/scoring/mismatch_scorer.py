@@ -88,6 +88,28 @@ class ScoredCandidateHit:
     mismatch_analysis: MismatchAnalysis
     scoring_model: str
     pam_multiplier_applied: float = 1.0
+    site_type: str = "OFF_TARGET"
+    is_on_target: bool = False
+    classification_basis: str = "unassigned"
+
+    def with_classification(
+        self,
+        site_type: str,
+        is_on_target: bool,
+        classification_basis: str,
+    ) -> "ScoredCandidateHit":
+        """Returns a copy of this scored candidate with updated on-target classification."""
+        return ScoredCandidateHit(
+            candidate=self.candidate,
+            score=self.score,
+            raw_score=self.raw_score,
+            mismatch_analysis=self.mismatch_analysis,
+            scoring_model=self.scoring_model,
+            pam_multiplier_applied=self.pam_multiplier_applied,
+            site_type=site_type,
+            is_on_target=is_on_target,
+            classification_basis=classification_basis,
+        )
 
     def __post_init__(self) -> None:
         """Validates score ranges."""
