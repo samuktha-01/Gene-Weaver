@@ -111,8 +111,11 @@ class TwoBitEncoder:
             InvalidSequenceError: If any unsupported or ambiguous nucleotide character
                 (including 'N', 'R', 'Y', or non-alphabetic symbols) is encountered.
         """
-        # Strip internal and surrounding whitespace
-        cleaned = re.sub(r"\s+", "", sequence)
+        # Strip internal and surrounding whitespace if present
+        if " " in sequence or "\n" in sequence or "\t" in sequence or "\r" in sequence:
+            cleaned = re.sub(r"\s+", "", sequence)
+        else:
+            cleaned = sequence
         if not cleaned:
             return np.empty(0, dtype=np.uint8)
 

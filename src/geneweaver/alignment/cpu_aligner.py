@@ -185,11 +185,12 @@ class CPUAligner(BaseSequenceAligner):
         if effective_config.search_reverse_strand:
             # Vectorized reverse complement: in 2-bit encoding, comp(x) = x ^ 3; reverse via [::-1]
             rc_seq_2bit = np.ascontiguousarray((seq_2bit ^ 3)[::-1])
-            rc_seq_str = reverse_complement(seq_str) if seq_str is not None else None
-
+            # Avoid allocating whole-chunk reverse complement string up-front.
+            # Passing seq_str=None causes _scan_single_strand to decode the 23-bp target sequence
+            # on-demand via TwoBitEncoder only for passing candidate hits.
             rev_hits = self._scan_single_strand(
                 seq_2bit=rc_seq_2bit,
-                seq_str=rc_seq_str,
+                seq_str=None,
                 guide_encoded=guide_encoded,
                 guide_len=guide_len,
                 strand=Strand.REVERSE,

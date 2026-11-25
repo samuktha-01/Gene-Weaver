@@ -25,6 +25,10 @@ class SequenceNormalizer:
     # Translation table: strips whitespace and maps U/u to T
     _TRANS_TABLE = str.maketrans({"U": "T", "u": "T"})
 
+    # Precompiled regex patterns for fast nucleotide validation
+    _CANONICAL_PATTERN = re.compile(r"^[ACGT]*$")
+    _AMBIGUOUS_PATTERN = re.compile(r"^[ACGTNRYWSKMBDHV]*$")
+
     def normalize(self, sequence: str) -> str:
         """Normalizes a raw nucleotide sequence.
 
@@ -39,10 +43,16 @@ class SequenceNormalizer:
         Returns:
             Normalized uppercase DNA sequence string.
         """
-        # Remove whitespace characters efficiently
-        cleaned = re.sub(r"\s+", "", sequence)
-        # Uppercase and translate RNA uracil to DNA thymine
-        return cleaned.upper().translate(self._TRANS_TABLE)
+        # Fast path: check for whitespace before regex allocation
+        if " " in sequence or "\t" in sequence or "\n" in sequence or "\r" in sequence:
+            cleaned = re.sub(r"\s+", "", sequence)
+        else:
+            cleaned = sequence
+        # Uppercase and translate RNA uracil to DNA thymine if needed
+        uppercased = cleaned.upper()
+        if "U" in uppercased:
+            return uppercased.translate(self._TRANS_TABLE)
+        return uppercased
 
     def validate(self, sequence: str, allow_ambiguity: bool = True) -> Tuple[bool, Optional[str]]:
         """Validates that all characters in the sequence are permissible nucleotides.
@@ -55,11 +65,11 @@ class SequenceNormalizer:
         Returns:
             Tuple of (is_valid, error_message_if_invalid).
         """
-        allowed = self.ALL_VALID_NUCLEOTIDES if allow_ambiguity else self.CANONICAL_BASES
-        # Fast path: set-based check avoids Python per-character loop overhead
-        if set(sequence) <= allowed:
+        pattern = self._AMBIGUOUS_PATTERN if allow_ambiguity else self._CANONICAL_PATTERN
+        if pattern.match(sequence):
             return True, None
 
+        allowed = self.ALL_VALID_NUCLEOTIDES if allow_ambiguity else self.CANONICAL_BASES
         for idx, char in enumerate(sequence):
             if char not in allowed:
                 char_repr = repr(char)
