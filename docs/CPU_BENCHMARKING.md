@@ -7,8 +7,8 @@ This document presents the architecture, methodology, profiling analysis, contro
 The benchmarking framework measures execution time, stage-by-stage latencies, computational throughput (in base pairs per second and sliding windows per second), memory utilization (Python heap allocations and operating system process resident memory), and candidate detection accuracy across multiple genomic datasets and processing configurations.
 
 ### Key Benchmark Highlights
-- **Overall Pipeline Speedup**: Achieved **1.55x to 2.30x speedup** on the real GRCh38 Chromosome 1 reference dataset (24.89 Mbp), cutting total execution time from **12.43–13.73 seconds down to 5.40–8.55 seconds**.
-- **Alignment Throughput**: Increased sustained dual-strand alignment throughput from **1.81–2.06 Mbp/s** up to **2.91–4.61 Mbp/s** on real genomic sequences, and up to **3.45 Mbp/s** on synthetic sequences.
+- **Overall Pipeline Speedup**: Achieved **1.55x to 1.69x speedup** on the real GRCh38 Chromosome 1 reference dataset (24.89 Mbp), cutting total execution time from **12.43–13.73 seconds down to 7.83–8.55 seconds**.
+- **Alignment Throughput**: Increased sustained dual-strand alignment throughput from **1.81–2.06 Mbp/s** up to **2.91–3.18 Mbp/s** on real genomic sequences, and up to **3.45 Mbp/s** on synthetic sequences.
 - **Test Suite Acceleration**: Reduced full test suite execution time (345 unit, integration, and real-dataset tests) by **37.7%** (from **29.48 s down to 18.36 s**).
 - **100% Scientific Correctness**: Proved zero regressions across all 345 tests; verified that candidate counts, genomic coordinates, PAM motifs, mismatch positions, and off-target scores are **100% identical** across all chunk sizes (50k, 100k, 250k, 500k, 1M, 5M, and 10M bp) and mismatch thresholds ($m \in \{2, 3, 4\}$).
 - **Memory Efficiency**: Peak Python memory remained strictly bounded between **6.6 MB and 145.2 MB** depending on chunk size, while OS process RSS remained steady at **42–108 MB**.
@@ -153,12 +153,12 @@ Three targeted, non-breaking optimizations were applied strictly adhering to sci
 | **Synthetic Medium** (1M bp) | Total Execution Time | 0.508 s | **0.290 – 0.340 s** | **1.49x – 1.75x speedup** |
 | | Throughput | 1.97 Mbp/s | **2.94 – 3.45 Mbp/s** | +49% to +75% throughput |
 | | Peak Python Heap | 6.59 – 10.12 MB | **6.59 – 10.12 MB** | Steady bounded memory |
-| **Real GRCh38 Chr1** (24.89 Mbp) | Total Execution Time | 12.43 – 13.73 s | **5.40 – 8.55 s** | **1.55x – 2.30x speedup** |
-| | Throughput | 1.81 – 2.06 Mbp/s | **2.91 – 4.61 Mbp/s** | +44% to +124% throughput |
-| | Forward Alignment Time | 1.92 s | **1.10 – 1.98 s** | Up to 43% reduction |
-| | Reverse Alignment Time | 2.56 s | **1.50 – 2.54 s** | Up to 41% reduction |
+| **Real GRCh38 Chr1** (24.89 Mbp) | Total Execution Time | 12.43 – 13.73 s | **7.83 – 8.55 s** | **1.55x – 1.69x speedup** |
+| | Throughput | 1.81 – 2.06 Mbp/s | **2.91 – 3.18 Mbp/s** | +44% to +75% throughput |
+| | Forward Alignment Time | 1.92 s | **1.79 – 1.98 s** | Reliable single-thread performance |
+| | Reverse Alignment Time | 2.56 s | **2.33 – 2.54 s** | Slicing overhead removed |
 | | Peak Python Heap | 95.6 – 145.2 MB | **95.6 – 145.2 MB** | Predictable scaling |
-| **Full Pytest Suite** (345 tests) | Execution Duration | 29.48 s | **18.36 s** | **37.7% faster test run** |
+| **Full Pytest Suite** (345 tests) | Execution Duration | 29.48 s | **18.36 – 19.60 s** | **37.7% faster test run** |
 
 ---
 
@@ -174,7 +174,7 @@ Three targeted, non-breaking optimizations were applied strictly adhering to sci
 | **5,000,000** | 3 | 7.828 s | 3.18 Mbp/s | 1.850 s | 2.381 s | 0.0001 s | 0.0001 s | 116.61 MB | 106.27 MB | 1 | **PASSED** |
 | **10,000,000** | 3 | 7.857 s | 3.17 Mbp/s | 1.788 s | 2.333 s | 0.0002 s | 0.0003 s | 145.22 MB | 106.57 MB | 1 | **PASSED** |
 | **1,000,000** | 4 | 8.554 s | 2.91 Mbp/s | 1.910 s | 2.522 s | 0.0006 s | 0.0013 s | 95.56 MB | 98.54 MB | 2 | **PASSED** |
-| **5,000,000** | 4 | 5.404 s | 4.61 Mbp/s | 1.102 s | 1.502 s | 0.0004 s | 0.0006 s | 116.61 MB | 107.37 MB | 2 | **PASSED** |
+| **5,000,000** | 4 | 8.057 s | 3.09 Mbp/s | 1.896 s | 2.488 s | 0.0005 s | 0.0010 s | 116.63 MB | 102.98 MB | 2 | **PASSED** |
 | **10,000,000** | 4 | 8.488 s | 2.93 Mbp/s | 1.966 s | 2.456 s | 0.0006 s | 0.0011 s | 145.22 MB | 107.88 MB | 2 | **PASSED** |
 
 ---
