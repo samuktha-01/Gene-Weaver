@@ -68,10 +68,19 @@ class MismatchScoringConfig:
 class ScoredCandidateHit:
     """Enriched candidate hit with mismatch analysis, numerical score, and PAM status.
 
-    All scores use GeneWeaver's unified risk convention:
-    Score ranges from 0.0 to 100.0. Higher score indicates HIGHER predicted off-target
-    cutting risk / activity (100.0 represents maximum risk / exact match, 0.0 represents
-    negligible predicted activity).
+    All scores use GeneWeaver's unified relative risk convention:
+    Score ranges from 0.0 to 100.0. Higher score indicates HIGHER predicted relative
+    off-target cutting risk / activity (100.0 represents maximum risk matching on-target,
+    0.0 represents negligible predicted activity).
+
+    SCIENTIFIC NOTE ON INTERPRETATION:
+    The candidate score is a HEURISTIC ESTIMATE of relative off-target cutting activity,
+    NOT a calibrated physical probability of DNA cleavage. For example, a candidate score
+    of 41.7 indicates the site has an estimated ~41.7% relative cutting efficiency compared
+    to the on-target locus; it does NOT mean a 41.7% probability of cleavage.
+    Furthermore, this candidate-level score (S_i) is distinct from the whole-guide aggregate
+    MIT specificity score (100 / (100 + sum S_i)), which scores the guide overall across
+    all off-target loci.
 
     Attributes:
         candidate: Underlying ValidatedCandidateHit or RawCandidateHit.
@@ -328,14 +337,21 @@ class HsuZhangScorer(BaseMismatchScorer):
          (e.g., position 14 weight = 0.851), whereas distal positions (1-2) have weight 0.0.
 
        T_dist: Pairwise mismatch distance penalty:
-       - If n == 1: T_dist = 1.0 (mean pairwise distance d_bar is defined as 19.0).
+       - If n == 1: T_dist = 1.0 (no distance penalty for a single mismatch).
        - If n >= 2:
-         d_bar = (sum_{i < j} |p_j - p_i|) / (n * (n - 1) / 2)
+         d_bar = (p_n - p_1) / (n - 1)
          T_dist = 1.0 / (((19.0 - d_bar) / 19.0) * 4.0 + 1.0)
-         Clustered / consecutive mismatches result in a small d_bar and strong penalty.
+         Calculated using the established MIT / CRISPOR consecutive sorted mismatch-gap
+         convention. Clustered / consecutive mismatches result in a small d_bar and strong penalty.
 
        T_count = 1.0 / (n^2)
        - Quadratic penalty on total mismatch count.
+
+    Score Interpretation:
+    - The score is a heuristic estimate of relative off-target cutting activity relative to
+      an on-target benchmark of 100.0. It is NOT a calibrated probability of DNA cleavage.
+    - Candidate score S_i evaluates an individual locus, distinct from the whole-guide
+      MIT Specificity Score (100 / (100 + sum S_i)).
 
     Documented Model Limitations:
     1. Specifically calibrated for Streptococcus pyogenes Cas9 (SpCas9) with 20 nt spacer
@@ -349,6 +365,7 @@ class HsuZhangScorer(BaseMismatchScorer):
 
     # Published empirical positional mismatch weight table (1-based positions 1 to 20)
     # Positions 1-2 carry 0 penalty; seed positions (11-20) carry heavy penalties up to 0.851
+    # Reference: Hsu et al., Nature Biotechnology 2013, Supplementary Table 1 & crispr.mit.edu
     POSITIONAL_WEIGHTS: Tuple[float, ...] = (
         0.0,    # Position 1  (5' distal)
         0.0,    # Position 2
@@ -369,7 +386,7 @@ class HsuZhangScorer(BaseMismatchScorer):
         0.615,  # Position 17
         0.804,  # Position 18
         0.685,  # Position 19
-        0.669,  # Position 20 (PAM-proximal)
+        0.583,  # Position 20 (PAM-proximal, Hsu et al. 2013)
     )
 
     @property
@@ -403,16 +420,14 @@ class HsuZhangScorer(BaseMismatchScorer):
                 w = self.POSITIONAL_WEIGHTS[-1]
             pos_term *= (1.0 - w)
 
-        # 2. Pairwise distance factor: T_dist
+        # 2. Pairwise distance factor: T_dist (consecutive sorted mismatch gap convention)
         if n == 1:
             dist_term = 1.0
         else:
-            num_pairs = (n * (n - 1)) // 2
-            sum_distances = sum(
-                abs(p2 - p1) for p1, p2 in itertools.combinations(positions, 2)
-            )
-            d_bar = sum_distances / num_pairs
-            # Standard MIT formula: 1 / (((19 - d_bar) / 19) * 4 + 1)
+            # Established MIT / CRISPOR consecutive sorted mismatch-gap convention:
+            # d_bar is the average gap between consecutive sorted mismatches:
+            # sum_{i=1}^{n-1} (p_{i+1} - p_i) / (n - 1) == (positions[-1] - positions[0]) / (n - 1)
+            d_bar = (positions[-1] - positions[0]) / (n - 1)
             dist_term = 1.0 / (((19.0 - d_bar) / 19.0) * 4.0 + 1.0)
 
         # 3. Mismatch count factor: 1 / n^2

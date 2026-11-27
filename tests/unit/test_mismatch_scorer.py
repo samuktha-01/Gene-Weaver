@@ -95,11 +95,143 @@ class TestHsuZhangScoring:
         assert pytest.approx(score, rel=1e-3) == 14.9
 
     def test_single_mismatch_pam_proximal_pos20(self, hsu_scorer: HsuZhangScorer):
-        """Single mismatch at PAM-proximal position 20 (weight W=0.669)."""
-        # Pos 20 has weight 0.669 -> 100 * (1 - 0.669) = 33.1
+        """Single mismatch at PAM-proximal position 20 (published weight W=0.583)."""
+        # Hsu et al. 2013: Pos 20 has weight 0.583 -> 100 * (1 - 0.583) = 41.7
         analysis = make_analysis(total_mismatches=1, positions=(20,))
         score = hsu_scorer.score_mismatches(analysis)
-        assert pytest.approx(score, rel=1e-3) == 33.1
+        assert pytest.approx(score, rel=1e-3) == 41.7
+
+
+class TestHsuZhangIndependentScientificVerification:
+    """Rigorous independent scientific verification of the Hsu-Zhang (2013) MIT model.
+
+    All expected values are independently hand-derived from the original mathematical formula:
+        Score = 100.0 * T_pos * T_dist * T_count
+    where:
+        T_pos = prod_{p in M} (1 - W[p])
+        T_dist = 1.0 / (((19.0 - d_bar) / 19.0) * 4.0 + 1.0) with d_bar = (p_n - p_1) / (n - 1)
+        T_count = 1.0 / n^2
+    """
+
+    def test_zero_mismatches_independent(self, hsu_scorer: HsuZhangScorer):
+        """Exact match produces maximum benchmark score of 100.0."""
+        # n = 0 -> exact match definition: 100.0
+        analysis = make_analysis(total_mismatches=0, positions=())
+        assert hsu_scorer.score_mismatches(analysis) == 100.0
+
+    def test_single_mismatch_pos1_independent(self, hsu_scorer: HsuZhangScorer):
+        """Position 1 mismatch: W[1] = 0.0, T_dist = 1.0, T_count = 1.0 -> 100.0."""
+        # T_pos = 1 - 0.0 = 1.0
+        # T_dist = 1.0 (single mismatch)
+        # T_count = 1 / 1^2 = 1.0
+        # Score = 100.0 * 1.0 * 1.0 * 1.0 = 100.0
+        analysis = make_analysis(total_mismatches=1, positions=(1,))
+        assert pytest.approx(hsu_scorer.score_mismatches(analysis), rel=1e-4) == 100.0
+
+    def test_single_mismatch_pos14_seed_peak_independent(self, hsu_scorer: HsuZhangScorer):
+        """Position 14 seed peak mismatch: W[14] = 0.851 -> Score = 14.90."""
+        # T_pos = 1 - 0.851 = 0.149
+        # T_dist = 1.0
+        # T_count = 1.0
+        # Score = 100.0 * 0.149 * 1.0 * 1.0 = 14.90
+        analysis = make_analysis(total_mismatches=1, positions=(14,))
+        assert pytest.approx(hsu_scorer.score_mismatches(analysis), rel=1e-4) == 14.90
+
+    def test_single_mismatch_pos20_pam_proximal_independent(self, hsu_scorer: HsuZhangScorer):
+        """Position 20 PAM-proximal mismatch: published W[20] = 0.583 -> Score = 41.70."""
+        # T_pos = 1 - 0.583 = 0.417
+        # T_dist = 1.0
+        # T_count = 1.0
+        # Score = 100.0 * 0.417 * 1.0 * 1.0 = 41.70
+        analysis = make_analysis(total_mismatches=1, positions=(20,))
+        assert pytest.approx(hsu_scorer.score_mismatches(analysis), rel=1e-4) == 41.70
+
+    def test_two_mismatches_extreme_dispersed_pos1_and_pos20(self, hsu_scorer: HsuZhangScorer):
+        """Two mismatches at positions (1, 20): d_bar = 19.0, T_dist = 1.0 -> Score = 10.425."""
+        # T_pos = (1 - 0.0) * (1 - 0.583) = 1.0 * 0.417 = 0.417
+        # d_bar = (20 - 1) / (2 - 1) = 19.0
+        # T_dist = 1.0 / (((19.0 - 19.0) / 19.0) * 4.0 + 1.0) = 1.0 / 1.0 = 1.0
+        # T_count = 1.0 / 2^2 = 0.25
+        # Expected Score = 100.0 * 0.417 * 1.0 * 0.25 = 10.425
+        analysis = make_analysis(total_mismatches=2, positions=(1, 20))
+        assert pytest.approx(hsu_scorer.score_mismatches(analysis), rel=1e-4) == 10.425
+
+    def test_two_mismatches_adjacent_in_seed_pos13_and_pos14(self, hsu_scorer: HsuZhangScorer):
+        """Two adjacent mismatches in seed (13, 14): d_bar = 1.0, T_dist = 19/91 -> Score = 0.30101."""
+        # W[13] = 0.613 -> 1 - 0.613 = 0.387
+        # W[14] = 0.851 -> 1 - 0.851 = 0.149
+        # T_pos = 0.387 * 0.149 = 0.057663
+        # d_bar = (14 - 13) / (2 - 1) = 1.0
+        # T_dist = 1.0 / (((19.0 - 1.0) / 19.0) * 4.0 + 1.0) = 1.0 / (72/19 + 1) = 19/91 ~= 0.2087912
+        # T_count = 1.0 / 4 = 0.25
+        # Expected Score = 100.0 * 0.057663 * (19 / 91) * 0.25 ~= 0.301010
+        analysis = make_analysis(total_mismatches=2, positions=(13, 14))
+        expected_score = 100.0 * 0.057663 * (19.0 / 91.0) * 0.25
+        assert pytest.approx(hsu_scorer.score_mismatches(analysis), rel=1e-4) == expected_score
+
+    def test_three_clustered_mismatches_pos11_12_13(self, hsu_scorer: HsuZhangScorer):
+        """Three tightly clustered seed mismatches (11, 12, 13): d_bar = 1.0 -> Score = 0.245155."""
+        # W[11]=0.445 (0.555), W[12]=0.508 (0.492), W[13]=0.613 (0.387)
+        # T_pos = 0.555 * 0.492 * 0.387 = 0.10567422
+        # d_bar = (13 - 11) / (3 - 1) = 2.0 / 2 = 1.0
+        # T_dist = 19 / 91 ~= 0.2087912
+        # T_count = 1 / 3^2 = 1 / 9
+        # Expected Score = 100.0 * 0.10567422 * (19.0 / 91.0) * (1.0 / 9.0) ~= 0.245155
+        analysis = make_analysis(total_mismatches=3, positions=(11, 12, 13))
+        expected_score = 100.0 * (0.555 * 0.492 * 0.387) * (19.0 / 91.0) * (1.0 / 9.0)
+        assert pytest.approx(hsu_scorer.score_mismatches(analysis), rel=1e-4) == expected_score
+
+    def test_three_dispersed_mismatches_pos1_10_20(self, hsu_scorer: HsuZhangScorer):
+        """Three dispersed mismatches (1, 10, 20): d_bar = 9.5 -> Score = 1.422433."""
+        # W[1]=0.0 (1.0), W[10]=0.079 (0.921), W[20]=0.583 (0.417)
+        # T_pos = 1.0 * 0.921 * 0.417 = 0.384057
+        # d_bar = (20 - 1) / (3 - 1) = 19.0 / 2 = 9.5
+        # T_dist = 1.0 / (((19.0 - 9.5) / 19.0) * 4.0 + 1.0) = 1.0 / (0.5 * 4.0 + 1.0) = 1.0 / 3.0
+        # T_count = 1.0 / 3^2 = 1.0 / 9.0
+        # Expected Score = 100.0 * 0.384057 * (1.0 / 3.0) * (1.0 / 9.0) = 100.0 * 0.384057 / 27.0 ~= 1.422433
+        analysis = make_analysis(total_mismatches=3, positions=(1, 10, 20))
+        expected_score = 100.0 * 0.384057 / 27.0
+        assert pytest.approx(hsu_scorer.score_mismatches(analysis), rel=1e-4) == expected_score
+
+    def test_four_mismatches_independent(self, hsu_scorer: HsuZhangScorer):
+        """Four mismatches (1, 6, 12, 19): d_bar = 6.0, T_dist = 19/71, T_count = 1/16 -> Score = 0.156822."""
+        # W[1]=0.0 (1.0), W[6]=0.395 (0.605), W[12]=0.508 (0.492), W[19]=0.685 (0.315)
+        # T_pos = 1.0 * 0.605 * 0.492 * 0.315 = 0.09376338
+        # d_bar = (19 - 1) / (4 - 1) = 18.0 / 3 = 6.0
+        # T_dist = 1.0 / (((19.0 - 6.0) / 19.0) * 4.0 + 1.0) = 1.0 / (52/19 + 1) = 19 / 71 ~= 0.2676056
+        # T_count = 1.0 / 4^2 = 1.0 / 16.0 = 0.0625
+        # Expected Score = 100.0 * 0.09376338 * (19.0 / 71.0) * (1.0 / 16.0) ~= 0.156822
+        analysis = make_analysis(total_mismatches=4, positions=(1, 6, 12, 19))
+        expected_score = 100.0 * 0.09376338 * (19.0 / 71.0) / 16.0
+        assert pytest.approx(hsu_scorer.score_mismatches(analysis), rel=1e-4) == expected_score
+
+    def test_position_ordering_invariance(self, hsu_scorer: HsuZhangScorer):
+        """Mismatch positions passed in reversed or arbitrary order produce identical scores."""
+        analysis_sorted = make_analysis(3, (1, 10, 20))
+        analysis_reversed = make_analysis(3, (20, 10, 1))
+        analysis_permuted = make_analysis(3, (10, 1, 20))
+
+        score_sorted = hsu_scorer.score_mismatches(analysis_sorted)
+        score_reversed = hsu_scorer.score_mismatches(analysis_reversed)
+        score_permuted = hsu_scorer.score_mismatches(analysis_permuted)
+
+        assert score_sorted == score_reversed == score_permuted
+        assert pytest.approx(score_sorted, rel=1e-4) == 100.0 * 0.384057 / 27.0
+
+    def test_independent_component_decomposition(self, hsu_scorer: HsuZhangScorer):
+        """Independently verifies T_pos, T_dist, and T_count components."""
+        # Positions: (6, 14, 20)
+        # T_pos: (1 - 0.395) * (1 - 0.851) * (1 - 0.583) = 0.605 * 0.149 * 0.417 = 0.037590465
+        t_pos = (1.0 - 0.395) * (1.0 - 0.851) * (1.0 - 0.583)
+        # T_dist: d_bar = (20 - 6) / 2 = 14.0 / 2 = 7.0
+        # denominator = ((19 - 7) / 19) * 4 + 1 = (12/19)*4 + 1 = 48/19 + 1 = 67/19
+        t_dist = 19.0 / 67.0
+        # T_count: 1 / 3^2 = 1 / 9
+        t_count = 1.0 / 9.0
+        expected_score = 100.0 * t_pos * t_dist * t_count
+
+        analysis = make_analysis(3, (6, 14, 20))
+        assert pytest.approx(hsu_scorer.score_mismatches(analysis), rel=1e-5) == expected_score
 
     def test_seed_mismatch_penalized_substantially_more_than_non_seed(
         self, hsu_scorer: HsuZhangScorer
